@@ -1,0 +1,82 @@
+---
+- name: Ansible Playbook to Install Jenkins on Virtual Machine
+  hosts: all
+  become: yes
+
+  vars:
+    jenkins_java_package: openjdk-17-jdk
+    jenkins_port: 8080
+    jenkins_keyring_dir: /etc/apt/keyrings
+    jenkins_gpg_key_url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+    jenkins_gpg_dest: /etc/apt/keyrings/jenkins-keyring.asc
+    jenkins_apt_repo: "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+
+  tasks:
+    - name: 1. Update apt repository cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: 2. Install required prerequisite packages
+      apt:
+        name:
+          - "{{ jenkins_java_package }}"
+          - fontconfig
+          - curl
+          - gnupg
+          - ca-certificates
+        state: present
+
+    - name: 3. Create keyrings directory
+      file:
+        path: "{{ jenkins_keyring_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: 4. Download Jenkins official ASCII-armored GPG key
+      get_url:
+        url: "{{ jenkins_gpg_key_url }}"
+        dest: "{{ jenkins_gpg_dest }}"
+        mode: '0644'
+
+    - name: 5. Add Jenkins Debian-stable repository source list
+      apt_repository:
+        repo: "{{ jenkins_apt_repo }}"
+        state: present
+        filename: jenkins
+
+    - name: 6. Update apt cache after adding repository
+      apt:
+        update_cache: yes
+
+    - name: 7. Install Jenkins package
+      apt:
+        name: jenkins
+        state: present
+
+    - name: 8. Ensure Jenkins service is started and enabled on boot
+      systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    - name: 9. Wait for Jenkins to start listening on port {{ jenkins_port }}
+      wait_for:
+        port: "{{ jenkins_port }}"
+        delay: 5
+        timeout: 120
+
+    - name: 10. Read Jenkins initial administrator password
+      slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: initial_admin_password
+      ignore_errors: yes
+
+    - name: 11. Print setup completion summary
+      debug:
+        msg:
+          - "=========================================================="
+          - "Jenkins has been successfully installed and started!"
+          - "Jenkins Web UI: http://{{ ansible_host | default(inventory_hostname) }}:{{ jenkins_port }}"
+          - "Initial Admin Password: {{ (initial_admin_password.content | b64decode | trim) if initial_admin_password.content is defined else 'Check /var/lib/jenkins/secrets/initialAdminPassword' }}"
+          - "=========================================================="
